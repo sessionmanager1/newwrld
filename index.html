@@ -430,13 +430,34 @@ footer{position:relative;z-index:3;padding:70px 24px 40px;}
 
 /* back to top */
 #back-top{
-  position:fixed;bottom:26px;right:26px;width:48px;height:48px;border-radius:50%;
+  position:fixed;bottom:90px;right:26px;width:48px;height:48px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;z-index:400;
   background:rgba(20,8,32,0.7);backdrop-filter:blur(14px);
   opacity:0;visibility:hidden;transform:translateY(12px);transition:all .35s;
 }
 #back-top.show{opacity:1;visibility:visible;transform:translateY(0);}
 #back-top:hover{border-color:var(--glass-brd-hi);box-shadow:0 0 22px rgba(168,85,247,0.5);}
+
+/* floating chat launcher */
+#chat-fab{
+  position:fixed;bottom:26px;right:26px;z-index:401;
+  width:58px;height:58px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--violet),var(--neon));
+  color:#fff;font-size:1.35rem;
+  box-shadow:0 10px 30px rgba(124,58,237,0.55);
+  border:1px solid rgba(255,255,255,0.15);
+  transition:transform .3s, box-shadow .3s;
+}
+#chat-fab:hover{transform:translateY(-3px) scale(1.05);box-shadow:0 14px 40px rgba(168,85,247,0.7);}
+#chat-fab .fab-dot{
+  position:absolute;top:4px;right:4px;width:12px;height:12px;border-radius:50%;
+  background:#34D399;border:2px solid var(--void);box-shadow:0 0 6px #34D399;
+}
+@media (max-width:640px){
+  #chat-fab{width:52px;height:52px;font-size:1.2rem;bottom:20px;right:18px;}
+  #back-top{bottom:80px;right:18px;width:44px;height:44px;}
+}
 
 /* toast */
 #toast-wrap{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:1000;display:flex;flex-direction:column;gap:10px;align-items:center;}
@@ -1250,27 +1271,6 @@ footer{position:relative;z-index:3;padding:70px 24px 40px;}
   </div>
 </div>
 
-<!-- Report modal -->
-<div class="modal-overlay" id="modal-report" hidden>
-  <div class="modal-box glass">
-    <button class="modal-close" data-close aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
-    <h3>Report Message</h3>
-    <form id="form-report" class="auth-form">
-      <label>Reason
-        <select id="report-reason">
-          <option value="spam">Spam</option>
-          <option value="harassment">Harassment</option>
-          <option value="harmful_content">Harmful or illegal content</option>
-          <option value="impersonation">Impersonation</option>
-          <option value="other">Other</option>
-        </select>
-      </label>
-      <div class="auth-success" id="report-success"></div>
-      <button type="submit" class="glass-btn primary" style="width:100%;justify-content:center;">Submit Report</button>
-    </form>
-  </div>
-</div>
-
 <!-- CONNECT -->
 <section class="section connect-section" id="connect">
   <div class="reveal">
@@ -1342,6 +1342,7 @@ footer{position:relative;z-index:3;padding:70px 24px 40px;}
 </footer>
 
 <button id="back-top" class="glass" aria-label="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
+<button id="chat-fab" aria-label="Open PF Community chat"><i class="fa-solid fa-comment-dots"></i><span class="fab-dot"></span></button>
 <div id="toast-wrap" aria-live="polite"></div>
 
 <script>
@@ -1418,6 +1419,11 @@ revealEls.forEach(el => revealObserver.observe(el));
 // ---------- back to top ----------
 document.getElementById('back-top').addEventListener('click', () => {
   window.scrollTo({top:0, behavior:'smooth'});
+});
+
+// ---------- chat launcher (bottom-right) ----------
+document.getElementById('chat-fab').addEventListener('click', () => {
+  document.getElementById('community').scrollIntoView({behavior:'smooth', block:'start'});
 });
 
 // ---------- toast ----------
@@ -1537,11 +1543,6 @@ import {
       match /typing/{uid} {
         allow read: if true;
         allow write: if isOwner(uid);
-      }
-
-      match /reports/{reportId} {
-        allow create: if isSignedIn() && request.resource.data.reporterId == request.auth.uid;
-        allow read, update, delete: if isAdmin();
       }
 
       match /admins/{uid} {
@@ -1951,7 +1952,6 @@ function renderMessageRow(msg){
         ${!msg.deleted ? `<button data-act="copy" title="Copy"><i class="fa-solid fa-copy"></i></button>` : ''}
         ${isOwn && !msg.deleted ? `<button data-act="edit" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ''}
         ${isOwn && !msg.deleted ? `<button data-act="delete" title="Delete"><i class="fa-solid fa-trash"></i></button>` : ''}
-        ${!isOwn && !msg.deleted ? `<button data-act="report" title="Report"><i class="fa-solid fa-flag"></i></button>` : ''}
       </div>
     </div>
   `;
@@ -1959,7 +1959,6 @@ function renderMessageRow(msg){
 }
 
 // ---------- message action delegation ----------
-let reportTargetId = null;
 chatMessagesEl.addEventListener('click', async (e) => {
   const profileBtn = e.target.closest('[data-profile]');
   const jumpEl = e.target.closest('[data-jump]');
@@ -2004,32 +2003,34 @@ chatMessagesEl.addEventListener('click', async (e) => {
       }catch(e){ showToastLocal('Could not delete message', 'fa-solid fa-triangle-exclamation'); }
     }
   }
-  if(act === 'report'){
-    reportTargetId = id;
-    openModal('modal-report');
-  }
-});
-
-$('form-report').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  if(!currentUser || !reportTargetId) return;
-  const reason = $('report-reason').value;
-  const msg = messagesCache.get(reportTargetId);
-  try{
-    await addDoc(collection(db, 'reports'), {
-      reporterId: currentUser.uid,
-      messageId: reportTargetId,
-      reportedUserId: msg?.userId || null,
-      reason, status: 'open', createdAt: serverTimestamp()
-    });
-    $('report-success').textContent = 'Thank you — our team will review this.';
-    setTimeout(() => { closeModal('modal-report'); $('report-success').textContent=''; }, 1400);
-  }catch(e){
-    showToastLocal('Could not submit report', 'fa-solid fa-triangle-exclamation');
-  }
 });
 
 // ---------- reply preview close ----------
 $('reply-preview-close').addEventListener('click', () => { replyTarget = null; replyPreview.hidden = true; });
 
-// ---------- 
+// ---------- composer: send message ----------
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+  handleTyping();
+});
+chatInput.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    composer.requestSubmit();
+  }
+});
+
+composer.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if(!currentUser) return;
+  const text = chatInput.value.trim();
+  if(!text) return;
+  if(text.length > 2000){ showToastLocal('Message is too long', 'fa-solid fa-triangle-exclamation'); return; }
+
+  sendBtn.disabled = true;
+  sendBtn.classList.add('sending');
+  const payload = {
+    userId: currentUser.uid,
+    username: currentProfile.username,
+    photoURL: curr
