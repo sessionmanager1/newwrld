@@ -1261,6 +1261,17 @@ function timeAgo(ts){
 }
 
 let renderedIds = new Set();
+const userProfileCache = new Map(); // uid -> {username, photoURL} | null
+async function getUserProfile(uid){
+  if(!uid) return null;
+  if(userProfileCache.has(uid)) return userProfileCache.get(uid);
+  try{
+    const snap = await getDoc(doc(db,'users',uid));
+    const data = snap.exists() ? snap.data() : null;
+    userProfileCache.set(uid, data);
+    return data;
+  }catch(e){ return null; }
+}
 function listenMessages(){
   const q = query(collection(db,'messages'), orderBy('createdAt','asc'), limit(200));
   unsubMessages = onSnapshot(q, (snap)=>{
@@ -1314,6 +1325,24 @@ function renderMessage(id,m){
     </div>`:''}
   `;
   wrap.appendChild(pfp); wrap.appendChild(bubble);
+
+  // Resolve the sender's *current* profile rather than trusting whatever
+  // username/photo was stored on the message at send time — fixes old
+  // messages that were saved with a placeholder name, and keeps names
+  // correct if someone updates their profile later.
+  if(m.userId){
+    getUserProfile(m.userId).then(profile=>{
+      if(!profile || !profile.username) return;
+      const liveWrap = messageList.querySelector(`[data-id="${id}"]`);
+      if(!liveWrap) return;
+      const unameEl = liveWrap.querySelector('.uname');
+      if(unameEl) unameEl.textContent = '@'+profile.username;
+      const pfpEl = liveWrap.querySelector('.pfp');
+      if(pfpEl && profile.photoURL) pfpEl.src = profile.photoURL;
+      const replyEl = liveWrap.querySelector('.reply-quote b');
+      // reply-quote username is resolved separately below via replyPreview userId if present
+    });
+  }
 
   bubble.querySelectorAll('[data-act]').forEach(btn=>{
     btn.addEventListener('click', ()=>handleMsgAction(btn.dataset.act, id, m));
